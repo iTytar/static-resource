@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Template
+
+parameters:
+# ================ Storage parameters ================
+  - name: VOLUME_CLAIM_NAME
+    required: true
+  - name: VOLUME_NAME
+    required: true
+  - name: WEBROOT_PATH
+    value: "/app/.webroot"
+
+# ================ Application version ================
+  - name: PPOD_PROJECT_NAME
+    required: true
+  - name: PPOD_DEPLOYMENT_ID
+    required: true
+  - name: PPOD_DOCKER_REGISTRY
+    required: true
+  - name: PPOD_DOMAIN
+    required: true
+
+# ================== JVM parameters =====================
+  - name: JAVA_OPTIONS
+    value: "-XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap"
+
+# ================== UI parameters =====================
+  - name: SOCKET_TIMEOUT_MILLIS
+    required: true
+  - name: CONNECT_TIMEOUT_MILLIS
+    required: true
+
+objects:
+# Конфигуарция деплоя static-resource
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: static-resource-${PPOD_DEPLOYMENT_ID}
+  spec:
+   replicas: 1
+   selector:
+     deploymentconfig: static-resource-${PPOD_DEPLOYMENT_ID}
+   strategy:
+     type: Recreate
+   template:
+     metadata:
+       labels:
+         deploymentconfig: static-resource-${PPOD_DEPLOYMENT_ID}
+     spec:
+       containers:
+       - image: ${PPOD_DOCKER_REGISTRY}/static-resource:${PPOD_VERSION}
+         imagePullPolicy: Always
+         name: static-resource-${PPOD_DEPLOYMENT_ID}-img
+         ports:
+         - containerPort: 8080
+           protocol: TCP
+         env:
+         - name: VOLUME_CLAIM_NAME
+           value: ${VOLUME_CLAIM_NAME}
+         - name: VOLUME_NAME
+           value: ${VOLUME_NAME}
+         readinessProbe:
+           httpGet:
+             host: server-${PPOD_DEPLOYMENT_ID}-service.${PPOD_PROJECT_NAME}.svc
+             port: 8080
+             path: /swagger-ui.html
+           initialDelaySeconds: 20
+           timeoutSeconds: 5
+         volumeMounts:
+         - mountPath: ${WEBROOT_PATH}
+           name: ${VOLUME_NAME}
+       volumes:
+       - name: ${VOLUME_NAME}
+         persistentVolumeClaim:
+           claimName: ${VOLUME_CLAIM_NAME}
+   triggers:
+   - type: ConfigChange
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: static-resource-${PPOD_DEPLOYMENT_ID}-service
+  spec:
+   ports:
+   - port: 8080
+     protocol: TCP
+     targetPort: 8080
+   selector:
+     deploymentconfig: static-resource-${PPOD_DEPLOYMENT_ID}
+   type: ClusterIP
+
+- apiVersion: v1
+  kind: Route
+  metadata:
+    name: static-resource-${PPOD_DEPLOYMENT_ID}-route
+  spec:
+    host: static-resource.${PPOD_DOMAIN}
+    tls:
+      insecureEdgeTerminationPolicy: Allow
+      termination: edge
+    to:
+      kind: Service
+      name: static-resource-${PPOD_DEPLOYMENT_ID}-service
